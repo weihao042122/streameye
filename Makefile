@@ -1,4 +1,7 @@
 
+CROSS_COMPILE :=/opt/v3s/spinand/lichee/out/sun8iw8p1/linux/common/buildroot/external-toolchain/bin/arm-linux-gnueabi-
+LIB_DIR :=/home/w/tmp_mine/v3s_lib/out
+CC :=$(CROSS_COMPILE)gcc
 ifdef DEBUG
     CFLAGS = -Wall -pthread -g -D_GNU_SOURCE
 else
@@ -7,7 +10,10 @@ endif
 
 PREFIX = /usr/local
 
-all: streameye
+all: streameye camStream
+
+camStream.o: camStream.c
+	$(CC) $(CFLAGS) -c -o camStream.o camStream.c
 
 streameye.o: streameye.c streameye.h client.h common.h
 	$(CC) $(CFLAGS) -c -o streameye.o streameye.c
@@ -21,9 +27,13 @@ auth.o: auth.c auth.h  common.h
 streameye: streameye.o client.o auth.o
 	$(CC) $(CFLAGS) -o streameye streameye.o client.o auth.o $(LDFLAGS)
 
+camStream: camStream.o	
+	$(CC) $(CFLAGS) -o camStream camStream.o
+
 install: streameye
 	cp streameye $(PREFIX)/bin
 
 clean:
 	rm -f *.o
-	rm -f streameye
+	rm -f streameye camStream
+	
