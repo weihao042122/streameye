@@ -41,7 +41,7 @@ static int              stream_buf;
 static int              force_format;
 static int              frame_count = 1;
 static char             *outfile = NULL;
-
+static int              list_frame_rate = 0;
 static void errno_exit(const char *s)
 {
     fprintf(stderr, "%s error %d, %s\\n", s, errno, strerror(errno));
@@ -569,7 +569,9 @@ static void init_device(void)
     fprintf(stderr," colorspace: %d\n", fmt.fmt.pix.colorspace);
     fprintf(stderr," priv: %d\n", fmt.fmt.pix.priv);
     fprintf(stderr,"====================\n");
-    get_device_info();
+    if (list_frame_rate)
+        get_device_info();
+    
     /* Buggy driver paranoia. */
     min = fmt.fmt.pix.width * 2;
     if (fmt.fmt.pix.bytesperline < min)
@@ -590,6 +592,22 @@ static void init_device(void)
     case IO_METHOD_USERPTR:
 	    init_userp(fmt.fmt.pix.sizeimage);
 	    break;
+    }
+    
+    
+    /* set v4l2_captureparm.timeperframe */
+    struct v4l2_streamparm stream_parm;
+    stream_parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (-1 == xioctl(fd, VIDIOC_G_PARM, &stream_parm)){
+        fprintf(stderr, "VIDIOC_G_PARM error\n");
+    }else{
+        stream_parm.parm.capture.timeperframe.denominator = 20;
+        if (-1 == xioctl(fd, VIDIOC_S_PARM, &stream_parm)){
+            fprintf(stderr, "VIDIOC_S_PARM error\n");
+        }else{
+            fprintf(stderr, "stream_parm.capture.timeperframe.denominator=%d\n", stream_parm.parm.capture.timeperframe.denominator);
+            fprintf(stderr, "stream_parm.capture.timeperframe.numerator=%d\n", stream_parm.parm.capture.timeperframe.numerator);
+        }
     }
 }
 
@@ -643,7 +661,7 @@ static void usage(FILE *fp, int argc, char **argv)
 	     argv[0], dev_name, frame_count);
 }
 
-static const char short_options[] = "d:hmrusfc:o:";
+static const char short_options[] = "d:hmrusfc:o:l";
 
 static const struct option
 long_options[] = {
@@ -655,7 +673,8 @@ long_options[] = {
     { "stream", no_argument,       NULL, 's' },
     { "format", no_argument,       NULL, 'f' },
     { "count",  required_argument, NULL, 'c' },
-    { "out",    required_argument, NULL, 'c' },
+    { "out",    required_argument, NULL, 'o' },
+    { "list", required_argument, NULL, 'l' },
     { 0, 0, 0, 0 }
 };
 
@@ -713,6 +732,9 @@ int main(int argc, char **argv)
 		    break;
         case 'o':
             outfile = optarg;
+            break;
+        case 'l':
+            list_frame_rate++;;
             break;
 	    default:
 		    usage(stderr, argc, argv);
