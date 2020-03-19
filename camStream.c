@@ -20,7 +20,7 @@
 #include <linux/videodev2.h>
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
-
+#define MMAP_BUF_CNT 3
 enum io_method {
     IO_METHOD_READ,
     IO_METHOD_MMAP,
@@ -42,6 +42,9 @@ static int              force_format;
 static int              frame_count = 1;
 static char             *outfile = NULL;
 static int              list_frame_rate = 0;
+static int cam_width = 0;
+static int cam_height = 0;
+
 static void errno_exit(const char *s)
 {
     fprintf(stderr, "%s error %d, %s\\n", s, errno, strerror(errno));
@@ -65,9 +68,20 @@ static void process_image(const void *p, int size)
 {
 	fprintf(stderr, "size=%d \n", size);
     if (outfile){
+#if MJPEG
         FILE *fp = fopen(outfile, "wb");
         fwrite(p, size, 1, fp);
         fclose(fp);
+#else
+        extern unsigned char* compressYUV422toJPEG(unsigned char* src, int width, int height, int* olen);
+        int olen = 0;
+        unsigned char *jpeg = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
+        if (jpeg && olen > 0){
+            FILE *fp = fopen(outfile, "wb");
+            fwrite(jpeg, olen, 1, fp);
+            fclose(fp);
+        }
+#endif
     }else if (stream_buf)
 	    fwrite(p, size, 1, stdout);
 
@@ -184,8 +198,8 @@ static void mainloop(void)
 		    fd_set fds;
 		    struct timeval tv;
 		    int r;
-            gettimeofday(&tv, NULL);
-            fprintf(stderr, "%f\n", tv.tv_sec+tv.tv_usec/1000000.0);
+            //gettimeofday(&tv, NULL);
+            //fprintf(stderr, "%f\n", tv.tv_sec+tv.tv_usec/1000000.0);
 		    FD_ZERO(&fds);
 		    FD_SET(fd, &fds);
 		    /* Timeout. */
@@ -209,7 +223,6 @@ static void mainloop(void)
                 break;
 		    }
 		    /* EAGAIN - continue select loop. */
-//             usleep(33*1000);
 	    }
     }
 }
@@ -334,7 +347,7 @@ static void init_mmap(void)
 
     CLEAR(req);
 
-    req.count = 4;
+    req.count = MMAP_BUF_CNT;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
 
@@ -347,7 +360,7 @@ static void init_mmap(void)
 		    errno_exit("VIDIOC_REQBUFS");
 	    }
     }
-
+    
     if (req.count < 2) {
 	    fprintf(stderr, "Insufficient buffer memory on %s\\n",
 		     dev_name);
@@ -355,12 +368,12 @@ static void init_mmap(void)
     }
 
     buffers = calloc(req.count, sizeof(*buffers));
-
+    
     if (!buffers) {
 	    fprintf(stderr, "Out of memory\\n");
 	    exit(EXIT_FAILURE);
     }
-
+    
     for (n_buffers = 0; n_buffers < req.count; ++n_buffers) {
 	    struct v4l2_buffer buf;
 
@@ -369,18 +382,17 @@ static void init_mmap(void)
 	    buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	    buf.memory      = V4L2_MEMORY_MMAP;
 	    buf.index       = n_buffers;
-
-	    if (-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
+	    
+        if (-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
 		    errno_exit("VIDIOC_QUERYBUF");
 
-	    buffers[n_buffers].length = buf.length;
+        buffers[n_buffers].length = buf.length;
 	    buffers[n_buffers].start =
 		    mmap(NULL /* start anywhere */,
 			  buf.length,
 			  PROT_READ | PROT_WRITE /* required */,
 			  MAP_SHARED /* recommended */,
 			  fd, buf.m.offset);
-
 	    if (MAP_FAILED == buffers[n_buffers].start)
 		    errno_exit("mmap");
     }
@@ -515,6 +527,32 @@ static void init_device(void)
 
 
     CLEAR(cropcap);
+    
+    struct v4l2_input inp;
+
+    inp.index = 0;
+    if (-1 == ioctl(fd, VIDIOC_S_INPUT, &inp))
+    {
+        fprintf(stderr, "VIDIOC_S_INPUT %d error!\n", 0);
+        errno_exit("VIDIOC_S_INPUT");
+    }
+
+    /* set v4l2_captureparm.timeperframe */
+    struct v4l2_streamparm stream_parm;
+    stream_parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (-1 == xioctl(fd, VIDIOC_G_PARM, &stream_parm)){
+        fprintf(stderr, "VIDIOC_G_PARM error\n");
+    }else{
+        stream_parm.parm.capture.capturemode = 0x0002;
+        stream_parm.parm.capture.timeperframe.numerator = 1;
+        stream_parm.parm.capture.timeperframe.denominator = 20;
+        if (-1 == xioctl(fd, VIDIOC_S_PARM, &stream_parm)){
+            fprintf(stderr, "VIDIOC_S_PARM error\n");
+        }else{
+            fprintf(stderr, "stream_parm.capture.timeperframe.denominator=%d\n", stream_parm.parm.capture.timeperframe.denominator);
+            fprintf(stderr, "stream_parm.capture.timeperframe.numerator=%d\n", stream_parm.parm.capture.timeperframe.numerator);
+        }
+    }
 
     cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
@@ -542,18 +580,26 @@ static void init_device(void)
     if (force_format) {
 	    fmt.fmt.pix.width       = 640;
 	    fmt.fmt.pix.height      = 480;
-	    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
-	    fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
-
+	    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV; //V4L2_PIX_FMT_MJPEG;
+        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        fmt.fmt.pix.field = V4L2_FIELD_NONE;           //V4L2_FIELD_INTERLACED;//V4L2_FIELD_NONE;
+        fmt.fmt.pix.colorspace = V4L2_COLORSPACE_SRGB; //V4L2_COLORSPACE_SRGB;  //V4L2_COLORSPACE_JPEG;
+//         fmt.fmt.pix.rot_angle = 0;
+//         fmt.fmt.pix.subchannel = NULL;
+        
 	    if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
 		    errno_exit("VIDIOC_S_FMT");
 
 	    /* Note VIDIOC_S_FMT may change width and height. */
-    } else {
+    }
+    
+    {
 	    /* Preserve original settings as set by v4l2-ctl for example */
 	    if (-1 == xioctl(fd, VIDIOC_G_FMT, &fmt))
 		    errno_exit("VIDIOC_G_FMT");
     }
+    cam_width = fmt.fmt.pix.width;
+    cam_height = fmt.fmt.pix.height;
  	// Print Stream Format
     fprintf(stderr,"Stream Format Informations:\n");
     fprintf(stderr," type: %d\n", fmt.type);
@@ -562,7 +608,7 @@ static void init_device(void)
     char fmtstr[8];
     memset(fmtstr, 0, 8);
     memcpy(fmtstr, &fmt.fmt.pix.pixelformat, 4);
-    fprintf(stderr," pixelformat: %s\n", fmtstr);
+    fprintf(stderr," pixelformat: %08x[%s]\n", fmt.fmt.pix.pixelformat,  fmtstr);
     fprintf(stderr," field: %d\n", fmt.fmt.pix.field);
     fprintf(stderr," bytesperline: %d\n", fmt.fmt.pix.bytesperline);
     fprintf(stderr," sizeimage: %d\n", fmt.fmt.pix.sizeimage);
@@ -580,6 +626,7 @@ static void init_device(void)
     if (fmt.fmt.pix.sizeimage < min)
 	    fmt.fmt.pix.sizeimage = min;
 
+        
     switch (io) {
     case IO_METHOD_READ:
 	    init_read(fmt.fmt.pix.sizeimage);
@@ -594,21 +641,6 @@ static void init_device(void)
 	    break;
     }
     
-    
-    /* set v4l2_captureparm.timeperframe */
-    struct v4l2_streamparm stream_parm;
-    stream_parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if (-1 == xioctl(fd, VIDIOC_G_PARM, &stream_parm)){
-        fprintf(stderr, "VIDIOC_G_PARM error\n");
-    }else{
-        stream_parm.parm.capture.timeperframe.denominator = 20;
-        if (-1 == xioctl(fd, VIDIOC_S_PARM, &stream_parm)){
-            fprintf(stderr, "VIDIOC_S_PARM error\n");
-        }else{
-            fprintf(stderr, "stream_parm.capture.timeperframe.denominator=%d\n", stream_parm.parm.capture.timeperframe.denominator);
-            fprintf(stderr, "stream_parm.capture.timeperframe.numerator=%d\n", stream_parm.parm.capture.timeperframe.numerator);
-        }
-    }
 }
 
 static void close_device(void)
@@ -657,6 +689,8 @@ static void usage(FILE *fp, int argc, char **argv)
 	     "-s | --stream        Outputs stream to stdout\n"
 	     "-f | --format        Force format to 640x480 YUYV\n"
 	     "-c | --count         Number of frames to grab [%i]\n"
+         "-o | --out           output one frame of jpeg to file \n"
+         "-l | --list          list camera infomations\n"
 	     "",
 	     argv[0], dev_name, frame_count);
 }
@@ -674,7 +708,7 @@ long_options[] = {
     { "format", no_argument,       NULL, 'f' },
     { "count",  required_argument, NULL, 'c' },
     { "out",    required_argument, NULL, 'o' },
-    { "list", required_argument, NULL, 'l' },
+    { "list",   no_argument, NULL, 'l' },
     { 0, 0, 0, 0 }
 };
 
