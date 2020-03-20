@@ -44,6 +44,9 @@ static char             *outfile = NULL;
 static int              list_frame_rate = 0;
 static int cam_width = 0;
 static int cam_height = 0;
+static int mjpeg_frame = 0;
+
+extern unsigned char* compressYUV422toJPEG(unsigned char* src, int width, int height, int* olen);
 
 static void errno_exit(const char *s)
 {
@@ -66,27 +69,41 @@ static int xioctl(int fh, int request, void *arg)
 //process_image(数据指针，大小)
 static void process_image(const void *p, int size)
 {
-	fprintf(stderr, "size=%d \n", size);
+// 	fprintf(stderr, "size=%d \n", size);
     if (outfile){
-#if MJPEG
-        FILE *fp = fopen(outfile, "wb");
-        fwrite(p, size, 1, fp);
-        fclose(fp);
-#else
-        extern unsigned char* compressYUV422toJPEG(unsigned char* src, int width, int height, int* olen);
-        int olen = 0;
-        unsigned char *jpeg = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
-        if (jpeg && olen > 0){
+        if (mjpeg_frame){
             FILE *fp = fopen(outfile, "wb");
-            fwrite(jpeg, olen, 1, fp);
+            fwrite(p, size, 1, fp);
             fclose(fp);
+        }else{
+            int olen = 0;
+            unsigned char *jpeg = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
+            if (jpeg && olen > 0){
+                FILE *fp = fopen(outfile, "wb");
+                fwrite(jpeg, olen, 1, fp);
+                fclose(fp);
+            }
+            if (jpeg) free(jpeg);
         }
-#endif
-    }else if (stream_buf)
-	    fwrite(p, size, 1, stdout);
+    }else if (stream_buf){
+        if (mjpeg_frame) {
+            fwrite(p, size, 1, stdout);
+        } else {
+            int olen = 0;
+    //         struct timeval tv[2];
+    //         gettimeofday(&tv[0], NULL);
+            unsigned char *jpeg = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
+    //         gettimeofday(&tv[1], NULL);
+    //         fprintf(stderr, "interval:%f\n", tv[1].tv_sec-tv[0].tv_sec+(tv[1].tv_usec-tv[0].tv_usec)/1000000.0);
+            if (jpeg){
+                fwrite(jpeg, olen, 1, stdout);
+                free(jpeg);
+            }
+        }
+    }
 
     fflush(stderr);
-    fprintf(stderr, ".");
+//     fprintf(stderr, ".");
     fflush(stdout);
 }
 
@@ -580,7 +597,7 @@ static void init_device(void)
     if (force_format) {
 	    fmt.fmt.pix.width       = 640;
 	    fmt.fmt.pix.height      = 480;
-	    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV; //V4L2_PIX_FMT_MJPEG;
+	    fmt.fmt.pix.pixelformat = mjpeg_frame?V4L2_PIX_FMT_MJPEG:V4L2_PIX_FMT_YUYV; //V4L2_PIX_FMT_MJPEG;
         fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         fmt.fmt.pix.field = V4L2_FIELD_NONE;           //V4L2_FIELD_INTERLACED;//V4L2_FIELD_NONE;
         fmt.fmt.pix.colorspace = V4L2_COLORSPACE_SRGB; //V4L2_COLORSPACE_SRGB;  //V4L2_COLORSPACE_JPEG;
@@ -687,7 +704,7 @@ static void usage(FILE *fp, int argc, char **argv)
 	     "-r | --read          Use read() calls\n"
 	     "-u | --userp         Use application allocated buffers\n"
 	     "-s | --stream        Outputs stream to stdout\n"
-	     "-f | --format        Force format to 640x480 YUYV\n"
+	     "-f | --format        Force format to 640x480 YUYV[0] or mjpeg[1]\n"
 	     "-c | --count         Number of frames to grab [%i]\n"
          "-o | --out           output one frame of jpeg to file \n"
          "-l | --list          list camera infomations\n"
@@ -695,7 +712,7 @@ static void usage(FILE *fp, int argc, char **argv)
 	     argv[0], dev_name, frame_count);
 }
 
-static const char short_options[] = "d:hmrusfc:o:l";
+static const char short_options[] = "d:hmrusf:c:o:l";
 
 static const struct option
 long_options[] = {
@@ -705,7 +722,7 @@ long_options[] = {
     { "read",   no_argument,       NULL, 'r' },
     { "userp",  no_argument,       NULL, 'u' },
     { "stream", no_argument,       NULL, 's' },
-    { "format", no_argument,       NULL, 'f' },
+    { "format", required_argument,       NULL, 'f' },
     { "count",  required_argument, NULL, 'c' },
     { "out",    required_argument, NULL, 'o' },
     { "list",   no_argument, NULL, 'l' },
@@ -756,6 +773,9 @@ int main(int argc, char **argv)
 
 	    case 'f':
 		    force_format++;
+            mjpeg_frame = strtol(optarg, NULL, 0);
+		    if (errno)
+			    errno_exit(optarg);
 		    break;
 
 	    case 'c':

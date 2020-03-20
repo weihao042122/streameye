@@ -124,7 +124,6 @@ unsigned char* compressYUV422toJPEG(unsigned char* src, int width, int height, u
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_compress(&cinfo);
     jpeg_mem_dest(&cinfo, &outbuffer, olen);   
-    fprintf (stderr, "after init olen=%lu\n", *olen);
     
     // jrow is a libjpeg row of samples array of 1 row pointer
     cinfo.image_width = width & -1;
@@ -156,7 +155,7 @@ unsigned char* compressYUV422toJPEG(unsigned char* src, int width, int height, u
 
     jpeg_finish_compress(&cinfo);
     jpeg_destroy_compress(&cinfo);
-    fprintf (stderr, "libjpeg produced ,olen=%lu\n", *olen);    
+//     fprintf (stderr, "libjpeg produced ,olen=%lu\n", *olen);    
     free(tmprowbuf);
     return outbuffer;
 }

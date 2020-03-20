@@ -45,7 +45,7 @@ The following command will stream your camera (assuming it's at `/dev/video0`), 
     ffmpeg -f video4linux2 -i /dev/video0 -r 30 -s 640x480 -f mjpeg -qscale 5 - 2>/dev/null | streameye
 or
 
-    ./camStream -f -c -1 -s  | ./streameye
+    ./camStream -f 1 -c -1 -s  | ./streameye
 ## Extras
 
 ### raspimjpeg.py
