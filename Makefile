@@ -1,6 +1,6 @@
 
-#CROSS_COMPILE :=/opt/v3s/spinand/lichee/out/sun8iw8p1/linux/common/buildroot/external-toolchain/bin/arm-linux-gnueabi-
-CROSS_COMPILE :=/home/w/tmp_mine/tmp/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi/bin/arm-linux-gnueabi-
+CROSS_COMPILE :=/opt/v3s/spinand/lichee/out/sun8iw8p1/linux/common/buildroot/external-toolchain/bin/arm-linux-gnueabi-
+#CROSS_COMPILE :=/home/w/tmp_mine/tmp/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabi/bin/arm-linux-gnueabi-
 
 LIB_DIR :=/home/w/tmp_mine/v3s_lib/out
 CC :=$(CROSS_COMPILE)gcc
@@ -35,7 +35,7 @@ streameye: streameye.o client.o auth.o
 	$(CC) $(CFLAGS) -o streameye streameye.o client.o auth.o $(LDFLAGS)
 
 camStream: camStream.o yuyv2rgb.o
-	$(CC) $(CFLAGS) -o camStream camStream.o yuyv2rgb.o $(LD_JPEG)
+	$(CC) $(CFLAGS) -o camStream camStream.o yuyv2rgb.o $(LD_JPEG) -lpthread
 
 install: streameye
 	cp streameye $(PREFIX)/bin

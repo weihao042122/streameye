@@ -15,12 +15,15 @@
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
-
+#include <pthread.h>
 
 #include <linux/videodev2.h>
 
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 #define MMAP_BUF_CNT 3
+#define SHOT_SAVE_DIR "/data/shot/"
+#define CAMSTREAM_PIPE_FILE "/camStream_fifo"
+
 enum io_method {
     IO_METHOD_READ,
     IO_METHOD_MMAP,
@@ -45,6 +48,9 @@ static int              list_frame_rate = 0;
 static int cam_width = 0;
 static int cam_height = 0;
 static int mjpeg_frame = 0;
+static int shot_cnt = 0;
+static int shot_flag = 0;
+static int exit_flag = 0;
 
 extern unsigned char* compressYUV422toJPEG(unsigned char* src, int width, int height, int* olen);
 
@@ -65,6 +71,16 @@ static int xioctl(int fh, int request, void *arg)
     return r;
 }
 
+static void shot_store(const void *p , int size, char* file){
+    char filename[40];
+    if (file == NULL)
+        sprintf(filename, "%s%d.jpeg", SHOT_SAVE_DIR, ++shot_cnt);
+    else
+        sprintf(filename, "%s", file);
+    FILE *fp = fopen(filename, "wb");
+    fwrite(p, size, 1, fp);
+    fclose(fp);
+}
 
 //process_image(数据指针，大小)
 static void process_image(const void *p, int size)
@@ -72,34 +88,30 @@ static void process_image(const void *p, int size)
 // 	fprintf(stderr, "size=%d \n", size);
     if (outfile){
         if (mjpeg_frame){
-            FILE *fp = fopen(outfile, "wb");
-            fwrite(p, size, 1, fp);
-            fclose(fp);
+           shot_store(p , size, outfile);
         }else{
             int olen = 0;
-            unsigned char *jpeg = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
-            if (jpeg && olen > 0){
-                FILE *fp = fopen(outfile, "wb");
-                fwrite(jpeg, olen, 1, fp);
-                fclose(fp);
-            }
-            if (jpeg) free(jpeg);
+            unsigned char *jpegBuf = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
+            if (jpegBuf && olen > 0)
+                shot_store(jpegBuf , olen, outfile);
+            if (jpegBuf) free(jpegBuf);
         }
     }else if (stream_buf){
         if (mjpeg_frame) {
             fwrite(p, size, 1, stdout);
+            if (shot_flag)
+                shot_store(p , size, NULL);
         } else {
             int olen = 0;
-    //         struct timeval tv[2];
-    //         gettimeofday(&tv[0], NULL);
-            unsigned char *jpeg = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
-    //         gettimeofday(&tv[1], NULL);
-    //         fprintf(stderr, "interval:%f\n", tv[1].tv_sec-tv[0].tv_sec+(tv[1].tv_usec-tv[0].tv_usec)/1000000.0);
-            if (jpeg){
-                fwrite(jpeg, olen, 1, stdout);
-                free(jpeg);
+            unsigned char *jpegBuf = compressYUV422toJPEG((unsigned char*)p, cam_width, cam_height, &olen);
+            if (jpegBuf){
+                fwrite(jpegBuf, olen, 1, stdout);
+                if (shot_flag)
+                    shot_store(jpegBuf , olen, NULL);
+                free(jpegBuf);
             }
         }
+        shot_flag = 0;
     }
 
     fflush(stderr);
@@ -208,9 +220,9 @@ static void mainloop(void)
         count = 1;
 
     while (1) {
-        if ((frame_count != -1) && count-- <= 0){
+        if ((frame_count != -1) && count-- <= 0)
             break;
-        }
+        if (exit_flag)  break;
 	    for (;;) {
 		    fd_set fds;
 		    struct timeval tv;
@@ -590,7 +602,7 @@ static void init_device(void)
     } else {
 	    /* Errors ignored. */
     }
-
+    
     CLEAR(fmt);
 
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -642,8 +654,7 @@ static void init_device(void)
     min = fmt.fmt.pix.bytesperline * fmt.fmt.pix.height;
     if (fmt.fmt.pix.sizeimage < min)
 	    fmt.fmt.pix.sizeimage = min;
-
-        
+    
     switch (io) {
     case IO_METHOD_READ:
 	    init_read(fmt.fmt.pix.sizeimage);
@@ -690,6 +701,35 @@ static void open_device(void)
 		     dev_name, errno, strerror(errno));
 	    exit(EXIT_FAILURE);
     }
+}
+
+static void *fifo_read_thread_func(void *arg){
+    mkfifo(CAMSTREAM_PIPE_FILE, 777);
+    mkdir(SHOT_SAVE_DIR, 777);
+    FILE *fp = fopen(CAMSTREAM_PIPE_FILE, "r+");
+    if (fp == NULL) {
+        fprintf(stderr, "open %s failed", CAMSTREAM_PIPE_FILE);
+	    exit(EXIT_FAILURE);
+    }
+    char tbuf[32];
+    
+    while(1){
+        if (fgets(tbuf, sizeof(tbuf), fp) == NULL){
+            fprintf(stderr, "fifo read error, exit");
+            continue;
+        }
+        if (strncmp(tbuf, "shot ", strlen("shot ")) == 0) {
+            fprintf(stderr, "get cmd:%s\n", "shot");
+            shot_flag = 1;
+        }else if (strncmp(tbuf, "exit", strlen("exit")) == 0) {
+            fprintf(stderr, "get cmd:%s\n", "shot");
+            exit_flag = 1;
+        }else{
+            fprintf(stderr, "get fifo :%s", tbuf);
+        }
+    }
+    pthread_exit(NULL);
+    return 0;
 }
 
 static void usage(FILE *fp, int argc, char **argv)
@@ -799,6 +839,8 @@ int main(int argc, char **argv)
     open_device();
     init_device();
     start_capturing();
+    pthread_t mPthread;
+    pthread_create(&mPthread, NULL, fifo_read_thread_func, NULL);
     mainloop();
     stop_capturing();
     uninit_device();
