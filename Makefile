@@ -12,15 +12,18 @@ endif
 
 PREFIX = /usr/local/
 LDFLAGS := --static
-CFLAGS += -I$(LIB_DIR)/include
+CFLAGS += -I$(LIB_DIR)/include -std=c99
 LD_JPEG := -ljpeg -L$(LIB_DIR)/lib -Wl,-rpath,/data/lib/
-all: streameye camStream
+all: streameye camStream dualCamStream
 
 yuyv2rgb.o: yuyv2rgb.c
 	$(CC) $(CFLAGS) -c -o yuyv2rgb.o yuyv2rgb.c
 
 camStream.o: camStream.c
 	$(CC) $(CFLAGS) -c -o camStream.o camStream.c
+
+dualCamStream.o: dualCamStream.c
+	$(CC) $(CFLAGS) -c -o dualCamStream.o dualCamStream.c
 
 streameye.o: streameye.c streameye.h client.h common.h
 	$(CC) $(CFLAGS) -c -o streameye.o streameye.c
@@ -36,6 +39,9 @@ streameye: streameye.o client.o auth.o
 
 camStream: camStream.o yuyv2rgb.o
 	$(CC) $(CFLAGS) -o camStream camStream.o yuyv2rgb.o $(LD_JPEG) -lpthread
+
+dualCamStream: dualCamStream.o yuyv2rgb.o
+	$(CC) $(CFLAGS) -o dualCamStream dualCamStream.o yuyv2rgb.o $(LD_JPEG) -lpthread
 
 install: streameye
 	cp streameye $(PREFIX)/bin

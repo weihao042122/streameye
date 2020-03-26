@@ -1,5 +1,7 @@
 *.o
 streameye
+camStream
+dualCamStream
 test*
 .cproject
 .project
