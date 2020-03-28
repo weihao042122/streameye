@@ -23,6 +23,9 @@
 #define MMAP_BUF_CNT 3
 #define SHOT_SAVE_DIR "/data/shot/"
 #define CAMSTREAM_PIPE_FILE "/camStream_fifo"
+#define CAM_WIDTH 640
+#define CAM_HEIGHT 480
+#define CAM_ROTATION_MANU 1
 
 enum io_method {
     IO_METHOD_READ,
@@ -46,9 +49,6 @@ static int cam_width = 0;
 static int cam_height = 0;
 static int mjpeg_frame = 0;
 static int exit_flag = 0;
-
-#define CAM_WIDTH 640
-#define CAM_HEIGHT 480
 
 static unsigned char camera_read_flag[2] = {0,0};
 static unsigned char shot_flag[2] = {0,0};
@@ -94,18 +94,17 @@ static void shot_store(const void *p , int size, char* file, int idx){
 //process_image(数据指针，大小)
 static void process_image(const void *p, int size, int idx)
 {
-
-//     unsigned char *tmp = (unsigned char*)p;
-//     for (int i = 0; i < CAM_HEIGHT; i++){
-//         for (int j = 0; j < CAM_WIDTH*2; j++) {
-//             yuyvframe[i][j + idx * CAM_WIDTH] = *(tmp++);
-//         }
-//     }
     if (shot_flag[idx]) {
         shot_flag[idx] = 0;
         shot_store(p , size, NULL, idx);
     }
+#if CAM_ROTATION_MANU
+    for (int i = 0; i < CAM_HEIGHT; i++){
+        memcpy(yuyvframe+(i*CAM_WIDTH*2*2+idx*CAM_WIDTH*2), p+i*CAM_WIDTH*2, CAM_WIDTH*2);
+    }
+#else
     memcpy(yuyvframe+(CAM_WIDTH*CAM_HEIGHT*2*idx), p, CAM_WIDTH*CAM_HEIGHT*2);
+#endif
     camera_read_flag[idx] = 1;
 }
 
@@ -246,7 +245,11 @@ static void mainloop(void)
                 camera_read_flag[0] = 0;
                 camera_read_flag[1] = 0;
                 int olen = 0;
+#if CAM_ROTATION_MANU
+                unsigned char *jpegBuf = compressYUV422toJPEG((unsigned char*)yuyvframe, CAM_WIDTH*2, CAM_HEIGHT, &olen);
+#else
                 unsigned char *jpegBuf = compressYUV422toJPEG((unsigned char*)yuyvframe, CAM_WIDTH, CAM_HEIGHT*2, &olen);
+#endif
                 if (jpegBuf){
                     fwrite(jpegBuf, olen, 1, stdout);
                     free(jpegBuf);
